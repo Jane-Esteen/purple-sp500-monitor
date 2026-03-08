@@ -7,6 +7,8 @@ from portfolio_engine import PortfolioEngine
 from backtest_engine import simple_backtest
 import os
 from fredapi import Fred
+st.write("FRED_KEY 是否读取成功:", bool(os.environ.get("FRED_API_KEY")))
+
 
 st.set_page_config(page_title="S&P500宏观量化看板", layout="wide")
 
