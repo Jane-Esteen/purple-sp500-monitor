@@ -31,8 +31,11 @@ jobs:
 
       - name: Commit and Push Changes
         run: |
-          git config --global user.name "GitHub Action Bot"
-          git config --global user.email "action@github.com"
-          git add market_data.csv pe_data.csv
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          # 检查文件是否存在后再 add，避免报错 128
+          if [ -f market_data.csv ]; then git add market_data.csv; fi
+          if [ -f pe_data.csv ]; then git add pe_data.csv; fi
+          
           git commit -m "Auto-sync market data [skip ci]" || exit 0
           git push
