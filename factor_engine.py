@@ -24,4 +24,7 @@ class FactorEngine:
 
     @staticmethod
     def buffett_indicator(market_cap, gdp):
+        if gdp == 0 or pd.isna(gdp):
+            return np.nan  # 或者返回0
         return market_cap / gdp
+
