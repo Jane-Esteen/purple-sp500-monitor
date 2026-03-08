@@ -2,16 +2,15 @@ name: Daily Data Sync
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天北京时间早上 8:00 自动运行
-  workflow_dispatch: # 允许你手动点击按钮测试运行
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   update-data:
     runs-on: ubuntu-latest
-    # 必须赋予 Actions 写入文件的权限
     permissions:
       contents: write
-      
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
@@ -33,9 +32,14 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          # 检查文件是否存在后再 add，避免报错 128
-          if [ -f market_data.csv ]; then git add market_data.csv; fi
-          if [ -f pe_data.csv ]; then git add pe_data.csv; fi
           
-          git commit -m "Auto-sync market data [skip ci]" || exit 0
-          git push
+          # 关键改进：只 add 真实存在的文件，如果没有 CSV 也不报 128 错误
+          git add *.csv || echo "No CSV files found to add"
+          
+          # 检查是否有变更需要提交，防止空提交报错
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-sync market data [skip ci]"
+            git push
+          fi
