@@ -1,0 +1,38 @@
+name: Daily Data Sync
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天北京时间早上 8:00 自动运行
+  workflow_dispatch: # 允许你手动点击按钮测试运行
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    # 必须赋予 Actions 写入文件的权限
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: pip install yfinance pandas fredapi lxml
+
+      - name: Run ETL Script
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python update_data.py
+
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git add market_data.csv pe_data.csv
+          git commit -m "Auto-sync market data [skip ci]" || exit 0
+          git push
