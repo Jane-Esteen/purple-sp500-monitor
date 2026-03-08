@@ -51,9 +51,19 @@ def get_market_data():
     pe_percentile = min(100.0, max(0.0, ((current_pe - 14) / (28 - 14)) * 100))
 
     # 准备近1年的图表数据 (约252个交易日)
-    chart_price = pd.DataFrame({'S&P 500': sp500[-252:], '200日均线': ma200_series[-252:]})
-    chart_vix = vix[-252:]
-    chart_rsi = rsi_series[-252:]
+    # 修复：强制转换为一维 Series，并统一时间索引
+    sp500_hist = pd.Series(sp500.values.flatten(), index=sp500.index)
+    ma200_hist = pd.Series(ma200_series.values.flatten(), index=ma200_series.index)
+    vix_hist = pd.Series(vix.values.flatten(), index=vix.index)
+    rsi_hist = pd.Series(rsi_series.values.flatten(), index=rsi_series.index)
+
+    chart_price = pd.DataFrame({
+        'S&P 500': sp500_hist[-252:], 
+        '200日均线': ma200_hist[-252:]
+    }, index=sp500_hist[-252:].index)
+    
+    chart_vix = vix_hist[-252:]
+    chart_rsi = rsi_hist[-252:]
     
     return current_price, ma_deviation, rsi_14, current_vix, current_pe, pe_percentile, chart_price, chart_vix, chart_rsi
 
