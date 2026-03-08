@@ -5,17 +5,21 @@ from factor_engine import FactorEngine
 from macro_engine import MacroEngine
 from portfolio_engine import PortfolioEngine
 from backtest_engine import simple_backtest
+import os
+from fredapi import Fred
 
 st.set_page_config(page_title="S&P500宏观量化看板", layout="wide")
 
 st.title("📊 S&P500宏观量化投资系统")
 st.caption("使用FRED + Yahoo Finance数据 | 中文展示")
 
-FRED_KEY = "FRED_API_KEY"
+FRED_KEY = os.environ.get("FRED_API_KEY")  # 一定要用这个方式读取
+if not FRED_KEY:
+    raise ValueError("FRED_API_KEY 未设置，请在 Streamlit Cloud Secrets 中添加")
 TOTAL_FUNDS = 50000
 
 # --- 数据加载 ---
-data_layer = DataLayer(FRED_KEY)
+fred = Fred(api_key=FRED_KEY)
 market = data_layer.market_data()
 macro = data_layer.macro_data()
 
