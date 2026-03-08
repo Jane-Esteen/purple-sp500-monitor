@@ -11,7 +11,7 @@ st.set_page_config(page_title="S&P500宏观量化看板", layout="wide")
 st.title("📊 S&P500宏观量化投资系统")
 st.caption("使用FRED + Yahoo Finance数据 | 中文展示")
 
-FRED_KEY = "YOUR_FRED_API_KEY"
+FRED_KEY = "FRED_API_KEY"
 TOTAL_FUNDS = 50000
 
 # --- 数据加载 ---
