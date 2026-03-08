@@ -1,299 +1,98 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import yfinance as yf
-from fredapi import Fred
+from data_layer import DataLayer
+from factor_engine import FactorEngine
+from macro_engine import MacroEngine
+from portfolio_engine import PortfolioEngine
+from backtest_engine import simple_backtest
 
-# ================================
-# CONFIG
-# ================================
+st.set_page_config(page_title="S&P500宏观量化看板", layout="wide")
 
-st.set_page_config(
-    page_title="Macro Allocation Dashboard",
-    layout="wide"
-)
+st.title("📊 S&P500宏观量化投资系统")
+st.caption("使用FRED + Yahoo Finance数据 | 中文展示")
 
-FRED_API_KEY = "YOUR_FRED_API_KEY"
-
+FRED_KEY = "YOUR_FRED_API_KEY"
 TOTAL_FUNDS = 50000
 
-fred = Fred(api_key=FRED_API_KEY)
+# --- 数据加载 ---
+data_layer = DataLayer(FRED_KEY)
+market = data_layer.market_data()
+macro = data_layer.macro_data()
 
-st.title("📈 Macro Allocation Dashboard")
-
-st.caption("S&P500 Macro Quant System")
-
-# ================================
-# DATA FETCH
-# ================================
-
-@st.cache_data(ttl=3600)
-def load_market():
-
-    spx = yf.download("^GSPC", start="1990-01-01")['Close']
-
-    vix = yf.download("^VIX", start="1990-01-01")['Close']
-
-    df = pd.DataFrame({
-        "SPX": spx,
-        "VIX": vix
-    })
-
-    return df
-
-
-@st.cache_data(ttl=3600)
-def load_macro():
-
-    dgs10 = fred.get_series("DGS10")
-
-    dgs2 = fred.get_series("DGS2")
-
-    gdp = fred.get_series("GDP")
-
-    wilshire = fred.get_series("WILL5000PRFC")
-
-    hy = fred.get_series("BAMLH0A0HYM2")
-
-    df = pd.DataFrame({
-        "DGS10": dgs10,
-        "DGS2": dgs2,
-        "GDP": gdp,
-        "WILL5000": wilshire,
-        "HY": hy
-    })
-
-    return df
-
-
-market = load_market()
-
-macro = load_macro()
-
-# ================================
-# CORE DATA
-# ================================
-
-price = market['SPX']
-vix = market['VIX']
+price = market["SPX"]
+vix = market["VIX"]
 
 current_price = price.iloc[-1]
 current_vix = vix.iloc[-1]
 
-ten_year = macro['DGS10'].iloc[-1] / 100
-two_year = macro['DGS2'].iloc[-1] / 100
-
-gdp = macro['GDP'].iloc[-1]
-wilshire = macro['WILL5000'].iloc[-1]
-
-hy_spread = macro['HY'].iloc[-1]
-
+# 宏观数据
+ten_year = macro["DGS10"].iloc[-1] / 100
+two_year = macro["DGS2"].iloc[-1] / 100
 yield_curve = ten_year - two_year
+hy_spread = macro["HY"].iloc[-1]
+gdp = macro["GDP"].iloc[-1]
+wilshire = macro["WILL5000"].iloc[-1]
 
-# ================================
-# FACTOR ENGINE
-# ================================
-
-def calc_rsi(series, window=14):
-
-    delta = series.diff()
-
-    gain = delta.clip(lower=0)
-
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(window).mean()
-
-    avg_loss = loss.rolling(window).mean()
-
-    rs = avg_gain / avg_loss
-
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
-
-
-rsi = calc_rsi(price)
-
-current_rsi = rsi.iloc[-1]
-
-ma200 = price.rolling(200).mean().iloc[-1]
-
+# --- 因子计算 ---
+factor = FactorEngine()
+rsi_series = factor.rsi(price)
+current_rsi = rsi_series.iloc[-1]
+ma200 = factor.moving_average(price, 200).iloc[-1]
 dev = (current_price / ma200 - 1) * 100
+PE_EST = 25
+erp = factor.erp(PE_EST, ten_year)
+buffett = factor.buffett_indicator(wilshire, gdp)
 
-# ================================
-# VALUATION
-# ================================
+# --- 市场热度 & 宏观周期 ---
+macro_engine = MacroEngine()
+heat_score = macro_engine.market_heat(current_vix, current_rsi, buffett, erp)
+regime = macro_engine.macro_regime(yield_curve, hy_spread)
 
-PE_ESTIMATE = 25
-
-earnings_yield = 1 / PE_ESTIMATE
-
-erp = earnings_yield - ten_year
-
-buffett = wilshire / gdp
-
-# ================================
-# MARKET HEAT MODEL
-# ================================
-
-score_vix = 100 - min(current_vix * 3, 100)
-
-score_rsi = current_rsi
-
-score_buffett = min(buffett * 50, 100)
-
-score_erp = max(0, min(erp * 200, 100))
-
-market_heat = (
-    0.25 * score_vix +
-    0.25 * score_rsi +
-    0.25 * score_buffett +
-    0.25 * score_erp
-)
-
-# ================================
-# MACRO REGIME
-# ================================
-
-def macro_regime():
-
-    if yield_curve < 0 and hy_spread > 5:
-        return "Recession Risk"
-
-    if yield_curve > 1 and hy_spread < 3:
-        return "Expansion"
-
-    return "Late Cycle"
-
-regime = macro_regime()
-
-# ================================
-# PORTFOLIO ENGINE
-# ================================
-
-def position_model(score):
-
-    if score > 80:
-        return 0.2
-
-    if score > 65:
-        return 0.4
-
-    if score > 50:
-        return 0.6
-
-    if score > 35:
-        return 0.8
-
-    return 1.0
-
-
-position = position_model(market_heat)
-
+# --- 仓位建议 ---
+position = PortfolioEngine.position_model(heat_score)
 target_value = TOTAL_FUNDS * position
 
-# ================================
-# BACKTEST
-# ================================
+# --- 回测 ---
+curve = simple_backtest(price, rsi_series)
 
-def backtest():
-
-    signal = (rsi < 40).astype(int)
-
-    returns = price.pct_change()
-
-    strategy = returns * signal.shift()
-
-    curve = (1 + strategy).cumprod()
-
-    return curve
-
-
-curve = backtest()
-
-# ================================
-# DASHBOARD
-# ================================
-
-st.subheader("Market Overview")
-
+# --- Dashboard 展示 ---
+st.subheader("📈 核心指标")
 c1, c2, c3, c4 = st.columns(4)
+c1.metric("S&P500现价", round(current_price))
+c2.metric("VIX指数", round(current_vix,1))
+c3.metric("RSI指数", round(current_rsi,1))
+c4.metric("200日均线偏离", f"{dev:.2f}%")
 
-c1.metric("S&P500", round(current_price))
-
-c2.metric("VIX", round(current_vix,1))
-
-c3.metric("RSI", round(current_rsi,1))
-
-c4.metric("MA200 Dev", f"{dev:.2f}%")
-
-st.divider()
-
-st.subheader("Macro Indicators")
-
+st.subheader("📊 宏观指标")
 c1, c2, c3, c4 = st.columns(4)
+c1.metric("ERP(预期收益率)", f"{erp*100:.2f}%")
+c2.metric("Buffett指标", f"{buffett:.2f}")
+c3.metric("收益率曲线", f"{yield_curve:.2f}")
+c4.metric("高收益利差", f"{hy_spread:.2f}")
 
-c1.metric("ERP", f"{erp*100:.2f}%")
-
-c2.metric("Buffett Indicator", f"{buffett:.2f}")
-
-c3.metric("Yield Curve", f"{yield_curve:.2f}")
-
-c4.metric("HY Spread", f"{hy_spread:.2f}")
-
-st.divider()
-
-st.subheader("Market Heat Score")
-
-st.metric("Heat Score", f"{market_heat:.1f}")
-
-if market_heat > 80:
-
-    st.error("Market Bubble")
-
-elif market_heat > 60:
-
-    st.warning("Market Overvalued")
-
-elif market_heat > 40:
-
-    st.info("Fair Value")
-
+st.subheader("🔥 市场热度")
+st.metric("热度指数", f"{heat_score:.1f}")
+if heat_score > 80:
+    st.error("市场泡沫风险高")
+elif heat_score > 60:
+    st.warning("市场偏高")
+elif heat_score > 40:
+    st.info("市场合理")
 else:
+    st.success("市场低估，机会大")
 
-    st.success("Undervalued")
-
-st.divider()
-
-st.subheader("Macro Regime")
-
+st.subheader("📌 宏观周期")
 st.write(regime)
 
-st.divider()
+st.subheader("💰 仓位建议")
+st.write("目标仓位:", f"{position*100:.0f}%")
+st.write("建议投资金额:", f"${target_value:,.0f}")
 
-st.subheader("Portfolio Allocation")
-
-st.write("Target Position:", f"{position*100:.0f}%")
-
-st.write("Suggested Investment:", f"${target_value:,.0f}")
-
-st.divider()
-
-# ================================
-# CHARTS
-# ================================
-
-tab1, tab2, tab3 = st.tabs(["S&P500","VIX","Strategy"])
-
+st.subheader("📉 回测曲线")
+tab1, tab2, tab3 = st.tabs(["S&P500价格","VIX指数","策略回测"])
 with tab1:
-
     st.line_chart(price[-500:])
-
 with tab2:
-
     st.area_chart(vix[-500:])
-
 with tab3:
-
-    st.line_chart(curve)
+    st.line_chart(curve[-500:])
