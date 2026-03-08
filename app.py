@@ -28,7 +28,7 @@ st.info(f"**账户概览：** 资金库 **{TOTAL_FUNDS:,.0f} RMB** ｜ 当前仓
 
 # --- 3. 核心 ETL 管道 (带防限流增强) ---
 @st.cache_data(ttl=86400) # 缓存 24 小时，减少接口触发
-def get_market_data_robust():
+def get_market_data_v2():
     # 模拟人为随机延迟，避开请求高峰
     time.sleep(random.uniform(2, 5))
     
@@ -89,7 +89,7 @@ def get_market_data_robust():
         return e
 
 # --- 4. 执行渲染 ---
-res = get_market_data_robust()
+res = get_market_data_v2()
 
 if isinstance(res, Exception):
     st.error(f"🔴 数据接口暂时受限: {res}")
