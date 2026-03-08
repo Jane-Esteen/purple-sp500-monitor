@@ -2,9 +2,11 @@ import yfinance as yf
 import pandas as pd
 from fredapi import Fred
 
+FRED_KEY = os.environ.get("FRED_API_KEY")  # 一定要用这个方式读取
+
 class DataLayer:
     def __init__(self, fred_key):
-        self.fred = Fred(api_key=fred_key)
+        self.fred = Fred(api_key=FRED_KEY)
 
     def market_data(self):
         # 下载10年历史数据
