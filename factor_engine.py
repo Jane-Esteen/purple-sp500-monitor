@@ -18,9 +18,11 @@ class FactorEngine:
         return series.rolling(window).mean()
 
     @staticmethod
-    def erp(pe, rate):
-        earnings_yield = 1 / pe
-        return earnings_yield - rate
+    def erp(pe, ten_year_rate):
+        if ten_year_rate == 0 or pd.isna(ten_year_rate):
+            return np.nan
+        return (pe - 15) / ten_year_rate
+
 
     @staticmethod
     def buffett_indicator(market_cap, gdp):
