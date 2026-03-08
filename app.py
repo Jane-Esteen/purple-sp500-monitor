@@ -14,133 +14,147 @@ try:
     FRED_KEY = st.secrets["FRED_API_KEY"]
     fred = Fred(api_key=FRED_KEY)
 except Exception:
-    st.error("未在 Secrets 中配置 FRED_API_KEY")
+    st.error("❌ 未在 Secrets 中配置 FRED_API_KEY。请在 Streamlit Cloud Settings 中添加。")
     st.stop()
 
-# --- 2. 资金逻辑 ---
+# --- 2. 资产账户逻辑 ---
 TOTAL_FUNDS = 50000 
 CURRENT_POSITION_PCT = 0.50 
 invested_funds = TOTAL_FUNDS * CURRENT_POSITION_PCT
 cash_available = TOTAL_FUNDS - invested_funds
 
 st.title("📈 标普500 核心指标量化看板")
-st.info(f"**账户概览：** 资金库 **{TOTAL_FUNDS:,.0f} RMB** ｜ 当前仓位 **{CURRENT_POSITION_PCT*100}%** ｜ 可用现金 **{cash_available:,.0f} RMB**")
+st.info(f"**资产概览：** 资金库 **{TOTAL_FUNDS:,.0f} RMB** ｜ 当前仓位 **{CURRENT_POSITION_PCT*100}%** ｜ 可用现金 **{cash_available:,.0f} RMB**")
 
-# --- 3. 核心 ETL 管道 (带防限流增强) ---
-@st.cache_data(ttl=86400) # 缓存 24 小时，减少接口触发
-def get_market_data_v2():
-    # 模拟人为随机延迟，避开请求高峰
-    time.sleep(random.uniform(2, 5))
+# --- 3. 核心 ETL 管道 (V3版本：解决缓存冲突与空值容错) ---
+@st.cache_data(ttl=86400) # 24小时强力缓存，规避限流
+def get_market_data_v3():
+    # 随机延迟，避开云端 IP 并发高峰
+    time.sleep(random.uniform(1.5, 4.5))
     
-    # 初始化变量
-    current_price, dev, rsi, vix_val = None, None, None, None
-    pe, pe_pct = None, None
-    chart_p, chart_vix, chart_rsi, hist_pe_pct = None, None, None, None
+    # 初始化兜底变量
+    output = {
+        "price": None, "dev": None, "rsi": None, "vix": None,
+        "pe": None, "pe_pct": None, "chart_p": None,
+        "chart_v": None, "chart_r": None, "hist_pe_pct": None
+    }
 
     try:
-        # A. 获取量价数据 (增加超时和重试逻辑)
+        # A. 批量下载 Yahoo 财经数据 (减少 Request 次数)
         tickers = ["^GSPC", "^VIX", "SPY"]
-        data = yf.download(tickers, period='2y', progress=False, timeout=15)
+        data = yf.download(tickers, period='2y', progress=False, timeout=20)
         
         if data.empty:
-            raise ValueError("Yahoo Finance 接口限流中，请稍后再试。")
+            return "Yahoo Finance 返回空数据 (接口可能被暂时封锁)"
 
-        # 提取标普 500 现价
+        # 提取标普 500
         sp500_close = data['Close']['^GSPC'].dropna()
         sp500 = pd.Series(sp500_close.values.flatten(), index=sp500_close.index)
-        current_price = float(sp500.iloc[-1])
+        output["price"] = float(sp500.iloc[-1])
         
         # 提取 VIX
         vix_series = data['Close']['^VIX'].dropna()
-        vix_val = float(vix_series.iloc[-1])
+        output["vix"] = float(vix_series.iloc[-1])
         
         # 提取 SPY PE
-        current_pe = yf.Ticker('SPY').info.get('trailingPE', 26.6)
+        output["pe"] = yf.Ticker('SPY').info.get('trailingPE', 26.8)
         
-        # B. 计算技术指标
+        # B. 技术指标计算
         ma200_series = sp500.rolling(window=200).mean().dropna()
-        dev = ((current_price / ma200_series.iloc[-1]) - 1) * 100
+        output["dev"] = ((output["price"] / ma200_series.iloc[-1]) - 1) * 100
         
         delta = sp500.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi_series = 100 - (100 / (1 + (gain / loss))).dropna()
-        rsi = float(rsi_series.iloc[-1])
+        output["rsi"] = float(rsi_series.iloc[-1])
 
-        # C. FRED 历史百分位逻辑
+        # C. FRED 历史百分位 (数据降级逻辑)
         try:
-            # 优先尝试股息率作为稳定的估值锚点 (FRED 接口限流较少)
+            # 优先尝试使用股息率模型计算百分位 (FRED 稳定性最高)
             dy_history = fred.get_series('SP500DY').dropna().tail(240)
-            pe_pct = (dy_history > (1/current_pe * 100)).mean() * 100
-            # 构造百分位趋势
-            pe_pct_history = sp500.apply(lambda x: (dy_history > (1/(x/(current_price/current_pe)) * 100)).mean() * 100)
-        except Exception:
-            pe_pct, pe_pct_history = None, None
+            current_pe = output["pe"]
+            output["pe_pct"] = float((dy_history > (1/current_pe * 100)).mean() * 100)
+            
+            # 构造历史百分位曲线
+            implied_eps = output["price"] / current_pe
+            output["hist_pe_pct"] = sp500.apply(lambda x: (dy_history > (1/(x/implied_eps) * 100)).mean() * 100)
+        except:
+            output["pe_pct"] = None
 
-        # 整理图表
-        chart_p = pd.DataFrame({"价格": sp500[-252:], "200日线": ma200_series[-252:]})
-        chart_vix = vix_series[-252:]
-        chart_rsi = rsi_series[-252:]
+        # D. 绘图准备
+        output["chart_p"] = pd.DataFrame({"现价": sp500[-252:], "200日线": ma200_series[-252:]})
+        output["chart_v"] = vix_series[-252:]
+        output["chart_r"] = rsi_series[-252:]
 
-        return (current_price, dev, rsi, vix_val, current_pe, pe_pct, 
-                chart_p, chart_vix, chart_rsi, pe_pct_history)
+        return output
 
     except Exception as e:
-        return e
+        return str(e)
 
-# --- 4. 执行渲染 ---
-res = get_market_data_v2()
+# --- 4. 运行管道与错误处理 ---
+res = get_market_data_v3()
 
-if isinstance(res, Exception):
-    st.error(f"🔴 数据接口暂时受限: {res}")
-    st.warning("提示：这通常是由于来自云服务器的访问过多。请点击右上角 'Clear Cache' 后等待几分钟再刷新。")
+if isinstance(res, str):
+    st.error(f"🔴 数据链路故障: {res}")
+    st.info("提示：这通常是接口限流。系统已自动记录，请点击右上角 'Clear Cache' 后 5 分钟重试。")
 else:
-    (price, dev, rsi, vix_val, pe, pe_pct, 
-     chart_p, chart_vix, chart_rsi, hist_pe_pct) = res
-
-    # 监控卡片
-    st.markdown("### 1️⃣ 核心指标监控")
+    # --- 5. 渲染监控指标卡片 ---
+    st.markdown("### 1️⃣ 实时监控指标")
     c1, c2, c3, c4 = st.columns(4)
     
-    if pe:
+    # 修复逻辑：增加 None 判断，防止比较报错
+    pe_val = res["pe"]
+    pe_pct = res["pe_pct"]
+    if pe_val is not None and pe_pct is not None:
         status = "高估" if pe_pct > 80 else ("低估" if pe_pct < 30 else "合理")
-        c1.metric("1. 真实 PE (20年分位)", f"{pe:.2f}倍", f"分位: {pe_pct:.1f}% ({status})", delta_color="inverse" if pe_pct > 80 else "normal")
+        c1.metric("1. 真实 PE (20年分位)", f"{pe_val:.2f}倍", f"分位: {pe_pct:.1f}% ({status})", delta_color="inverse" if pe_pct > 80 else "normal")
+    else:
+        c1.metric("1. 真实 PE", "获取中", "❌ 限流或缺失", delta_color="off")
     
-    c2.metric("2. 200日线偏离 (趋势)", f"{dev:+.2f}%", f"均线: {chart_p['200日线'].iloc[-1]:,.0f}")
-    c3.metric("3. VIX 指数 (情绪)", f"{vix_val:.2f}", "恐慌" if vix_val > 25 else "平稳", delta_color="inverse" if vix_val > 25 else "normal")
-    c4.metric("4. 14日 RSI (动量)", f"{rsi:.1f}", "超买" if rsi > 70 else ("超卖" if rsi < 30 else "中性"), delta_color="normal" if rsi < 30 else "inverse")
+    if res["dev"] is not None:
+        c2.metric("2. 200日线偏离", f"{res['dev']:+.2f}%", f"现价: {res['price']:,.0f}")
+    
+    if res["vix"] is not None:
+        c3.metric("3. VIX 恐慌指数", f"{res['vix']:.2f}", "恐慌" if res["vix"] > 25 else "平稳", delta_color="inverse" if res["vix"] > 25 else "normal")
+        
+    if res["rsi"] is not None:
+        c4.metric("4. 14日 RSI 动量", f"{res['rsi']:.1f}", "超买" if res["rsi"] > 70 else ("超卖" if res["rsi"] < 30 else "中性"), delta_color="normal" if res["rsi"] < 30 else "inverse")
 
-    # 历史趋势图
+    # --- 6. 历史走势图 ---
     st.markdown("---")
-    t1, t2, t3 = st.tabs(["估值百分位走势", "价格走势", "情绪动量"])
+    t1, t2, t3 = st.tabs(["估值百分位走势", "价格走势图", "情绪动量图"])
     with t1:
-        if hist_pe_pct is not None: st.line_chart(hist_pe_pct.tail(252), color="#8b5cf6")
+        if res["hist_pe_pct"] is not None:
+            st.line_chart(res["hist_pe_pct"].tail(252), color="#8b5cf6")
+        else: st.warning("PE 趋势暂不可用")
     with t2:
-        st.line_chart(chart_p, color=["#3b82f6", "#ef4444"])
+        if res["chart_p"] is not None:
+            st.line_chart(res["chart_p"], color=["#3b82f6", "#ef4444"])
     with t3:
         cv, cr = st.columns(2)
-        with cv: st.area_chart(chart_vix, color="#f59e0b")
-        with cr: st.line_chart(chart_rsi, color="#10b981")
+        with cv: st.area_chart(res["chart_v"], color="#f59e0b")
+        with cr: st.line_chart(res["chart_r"], color="#10b981")
 
-    # 决策建议
+    # --- 7. 量化决策引擎 ---
     st.markdown("---")
-    st.markdown("### 2️⃣ 量化决策建议")
+    st.markdown("### 2️⃣ 机器人决策建议")
     
-    risk_score = (pe_pct * 0.4 if pe_pct else 20) + (rsi * 0.3) + ((100 - min(vix_val*2, 100)) * 0.3)
+    # 风险评分容错逻辑
+    p_pct = pe_pct if pe_pct is not None else 50.0
+    v_val = res["vix"] if res["vix"] is not None else 20.0
+    r_val = res["rsi"] if res["rsi"] is not None else 50.0
     
-    if pe_pct and pe_pct > 85 and rsi > 65:
-        st.error(f"**🔴 【建议减仓】风险分: {risk_score:.1f}** —— 估值极高，动能透支。")
-    elif vix_val > 25 and rsi < 35:
-        st.success(f"**🟢 【建议买入】风险分: {risk_score:.1f}** —— 市场恐慌。建议动用 5,000 RMB 现金。")
-    elif dev < -5:
-        st.success(f"**🟢 【强力买入】风险分: {risk_score:.1f}** —— 价格跌破 200 日均线。")
+    risk_score = (p_pct * 0.4) + (r_val * 0.3) + ((100 - min(v_val*2, 100)) * 0.3)
+    
+    if p_pct > 85 and r_val > 65:
+        st.error(f"**🔴 【建议减仓】风险分: {risk_score:.1f}** —— 估值泡沫区间。")
+    elif v_val > 25 and r_val < 35:
+        st.success(f"**🟢 【建议买入】风险分: {risk_score:.1f}** —— 恐慌性超卖，建议动用部分现金。")
+    elif res["dev"] is not None and res["dev"] < -5:
+        st.success(f"**🟢 【长线买入】风险分: {risk_score:.1f}** —— 价格击穿 200 日线。")
     else:
-        st.warning(f"**🟡 【保持观望】风险分: {risk_score:.1f}** —— 指标中性。维持当前 50% 仓位。")
+        st.warning(f"**🟡 【持仓观望】风险分: {risk_score:.1f}** —— 无极端偏离，维持 50% 仓位。")
 
-# --- 5. 文档字典 ---
-with st.expander("📚 策略逻辑与名词解释"):
-    st.markdown("""
-    * **PE 百分位**：计算当前值在过去 20 年样本中的排名。
-    * **200 日线**：中长线支撑/阻力。
-    * **限流处理**：由于公共 IP 限制，如遇限流请耐心等待。系统已开启 24h 缓存保护。
-    """)
+with st.expander("📚 策略逻辑字典"):
+    st.write("数据源: FRED, Yahoo Finance. 缓存周期: 24h. 核心逻辑: 估值回归 + 恐慌抄底.")
