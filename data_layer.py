@@ -19,6 +19,7 @@ class DataLayer:
         return df
 
     def macro_data(self):
+    try:
         dgs10 = self.fred.get_series("DGS10")
         dgs2 = self.fred.get_series("DGS2")
         gdp = self.fred.get_series("GDP")
@@ -34,3 +35,17 @@ class DataLayer:
         })
         df = df.dropna()
         return df
+
+    except Exception as e:
+        # 防止整个 app 崩溃
+        import streamlit as st
+        st.error(f"FRED 数据抓取失败: {e}")
+        # 返回空 DataFrame
+        return pd.DataFrame({
+            "DGS10": [],
+            "DGS2": [],
+            "GDP": [],
+            "WILL5000": [],
+            "HY": []
+        })
+
