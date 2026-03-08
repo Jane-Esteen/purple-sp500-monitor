@@ -117,38 +117,54 @@ if price_s is not None and not price_s.empty:
     with t3:
         st.area_chart(vix_s[-252:], color="#f59e0b")
 
-    # --- 8. 详细量化决策建议 ---
+    # --- 8. 详细量化决策建议 (动态逻辑修复版) ---
     st.markdown("---")
     st.markdown("### 🤖 机器人投资执行报告")
     
-    # 详尽的判断逻辑输出
-    if pe_pct > 85 and rsi > 65:
-        st.error("#### 🔴 结论：建议减仓锁定利润")
-        st.write("**详细判定依据：**")
-        st.write(f"- 估值警报：当前 PE 高于过去 20 年中 **{pe_pct:.1f}%** 的时间，资产极度昂贵。")
-        st.write(f"- 动量透支：RSI 达 **{rsi:.1f}**，短期买盘力量枯竭。")
-        st.write(f"**执行建议：** 建议将仓位从当前的 {CURRENT_POSITION_PCT*100}% 降低至 30%，回笼部分现金。")
-    
-    elif current_vix > 25 and rsi < 35:
-        st.success("#### 🟢 结论：建议启动恐慌抄底")
-        st.write("**详细判定依据：**")
-        st.write(f"- 情绪崩溃：VIX 高达 **{current_vix:.2f}**，市场发生非理性恐慌。")
-        st.write(f"- 超卖信号：RSI 降至 **{rsi:.1f}**，短期抛压已释放殆尽。")
-        st.write(f"**执行建议：** 这是绝佳的左侧加仓点。建议从 {cash_available:,.0f} RMB 现金库中拨出 5,000 RMB 买入。")
-        
-    elif dev < -5:
-        st.success("#### 🟢 结论：触发长线定投买点")
-        st.write("**详细判定依据：**")
-        st.write(f"- 均线破位：价格已跌穿长期生命线 (MA200) 达 **{abs(dev):.1f}%**。")
-        st.write(f"- 估值修复：在此位置通常对应较好的安全边际。")
-        st.write("**执行建议：** 适合长线资金缓慢建仓，建议执行本月定投计划。")
-        
+    # 1. 独立生成各个指标的动态定性描述 (拒绝硬编码)
+    if pe_pct > 80:
+        pe_desc = f"🚨 估值高企：历史分位高达 **{pe_pct:.1f}%**，处于明显的泡沫高估区间。"
+    elif pe_pct < 30:
+        pe_desc = f"🌟 估值低洼：历史分位仅 **{pe_pct:.1f}%**，具备极高的安全边际。"
     else:
-        st.info("#### 🟡 结论：维持现状，耐心观望")
-        st.write("**详细判定依据：**")
-        st.write(f"- 估值温和：历史分位 **{pe_pct:.1f}%**，无泡沫也无明显低估。")
-        st.write(f"- 情绪平稳：VIX 处于 **{current_vix:.2f}**，市场波动在正常范围内。")
-        st.write(f"**执行建议：** 没有行动就是最好的行动。请持有当前 {CURRENT_POSITION_PCT*100}% 仓位，保留 {cash_available:,.0f} RMB 现金等待极端机会。")
+        pe_desc = f"⚖️ 估值温和：历史分位 **{pe_pct:.1f}%**，处于长期的合理定价区间。"
 
+    if current_vix > 25:
+        vix_desc = f"🌩️ 极度恐慌：VIX 飙升至 **{current_vix:.2f}**，市场处于非理性避险抛售中。"
+    elif current_vix < 15:
+        vix_desc = f"☀️ 极度贪婪：VIX 降至 **{current_vix:.2f}**，市场毫无防备，警惕回调。"
+    else:
+        vix_desc = f"☁️ 情绪平稳：VIX 处于 **{current_vix:.2f}**，市场波动在正常预期范围内。"
+
+    if rsi > 70:
+        rsi_desc = f"🔥 严重超买：RSI 达 **{rsi:.1f}**，短期买盘动能透支。"
+    elif rsi < 30:
+        rsi_desc = f"🧊 严重超卖：RSI 降至 **{rsi:.1f}**，短期抛压已释放殆尽。"
+    else:
+        rsi_desc = f"🌊 动能中性：RSI 处于 **{rsi:.1f}**，多空力量相对均衡。"
+
+    # 2. 综合打分与交易动作决策
+    risk_score = (pe_pct * 0.5) + (rsi * 0.5)
+    
+    if pe_pct > 80 and rsi > 60:
+        st.error("#### 🔴 结论：右侧减仓，锁定利润")
+        st.write(f"**综合风险分: {risk_score:.1f}** —— 资产极度昂贵且动能透支。建议将仓位降低至 30%。")
+    elif current_vix > 25 or (pe_pct < 30 and rsi < 40):
+        # 只要发生极度恐慌，或者低估且超卖，就触发买入
+        st.success("#### 🟢 结论：左侧建仓，恐慌买入")
+        st.write(f"**综合风险分: {risk_score:.1f}** —— 市场出现黄金坑。建议动用 {cash_available:,.0f} RMB 现金分批加仓。")
+    elif dev < -5:
+        st.success("#### 🟢 结论：均线破位，长线定投")
+        st.write(f"**综合风险分: {risk_score:.1f}** —— 价格跌穿 200 日线超过 5%，长线赔率极佳。")
+    else:
+        st.warning("#### 🟡 结论：信号分化，维持观望")
+        st.write(f"**综合风险分: {risk_score:.1f}** —— 未出现共振的极端交易信号。建议持有当前 {CURRENT_POSITION_PCT*100}% 仓位。")
+
+    # 3. 打印真实的判定依据
+    st.markdown("**🔍 详细判定依据：**")
+    st.write(pe_desc)
+    st.write(vix_desc)
+    st.write(rsi_desc)
+    
 else:
     st.error("⏳ 数据读取失败。请检查 GitHub 仓库中 market_data.csv 的格式是否正确。")
