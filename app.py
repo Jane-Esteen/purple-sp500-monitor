@@ -96,6 +96,10 @@ else:
 PE_EST = 25
 erp = factor.erp(PE_EST, ten_year)
 buffett = factor.buffett_indicator(wilshire, gdp)
+if np.isnan(buffett):
+    st.warning("Buffett指标计算失败，gdp数据为空")
+    buffett = 0
+
 
 # -------------------------------
 # 市场热度 & 宏观周期
