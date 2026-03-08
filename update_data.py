@@ -6,21 +6,28 @@ import os
 def update():
     # 1. 抓取量价数据
     try:
+        print("开始抓取 Yahoo Finance 数据...")
         tickers = ["^GSPC", "^VIX", "SPY"]
         data = yf.download(tickers, period='2y')['Close']
-        data.to_csv('market_data.csv')
+        if not data.empty:
+            data.to_csv('market_data.csv')
+            print("market_data.csv 生成成功")
     except Exception as e:
-        print(f"Yahoo数据抓取失败: {e}")
+        print(f"Yahoo 数据抓取异常: {e}")
     
-    # 2. 抓取 FRED 数据 (增加兜底生成)
+    # 2. 抓取 FRED 数据
     try:
-        fred = Fred(api_key=os.getenv('FRED_API_KEY'))
-        pe_hist = fred.get_series('SP500DY').dropna().tail(240)
-        pe_hist.to_csv('pe_data.csv')
+        print("开始抓取 FRED 数据...")
+        api_key = os.getenv('FRED_API_KEY')
+        if api_key:
+            fred = Fred(api_key=api_key)
+            pe_hist = fred.get_series('SP500DY').dropna().tail(240)
+            pe_hist.to_csv('pe_data.csv')
+            print("pe_data.csv 生成成功")
+        else:
+            print("未找到 FRED_API_KEY 环境变量")
     except Exception as e:
-        print(f"FRED抓取失败，生成兜底文件: {e}")
-        # 如果失败，生成一个包含 1.5% (约26倍PE) 的假数据确保流程不崩
-        pd.Series([1.5]*10, name='SP500DY').to_csv('pe_data.csv')
+        print(f"FRED 抓取异常: {e}")
 
 if __name__ == "__main__":
     update()
