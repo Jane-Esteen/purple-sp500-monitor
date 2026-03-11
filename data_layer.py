@@ -8,21 +8,22 @@ FRED_KEY = os.environ.get("FRED_API_KEY")
 
 class DataLayer:
     def __init__(self, fred_key=None):
-        # 兼容传入的 key 或环境变量
         key = fred_key or FRED_KEY
         self.fred = Fred(api_key=key)
 
     def market_data(self):
         try:
-            # 下载10年历史数据
-            spx = yf.download("^GSPC", period="10y", auto_adjust=True, threads=False)["Close"]
-            vix = yf.download("^VIX", period="10y", auto_adjust=True, threads=False)["Close"]
+            # 下载10年历史数据 (使用 Ticker 方式更稳定)
+            spx = yf.Ticker("^GSPC").history(period="10y")["Close"]
+            vix = yf.Ticker("^VIX").history(period="10y")["Close"]
 
-            # 将 Series 组合成 DataFrame
             df = pd.concat([spx, vix], axis=1)
             df.columns = ["SPX", "VIX"]
             
-            # 向下填充缺失值（比如有些日子VIX停盘但SPX开盘），然后去掉头部的NaN
+            # 去除 yfinance 时间戳自带的时区信息，避免后续对齐报错
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
+                
             df = df.ffill().dropna()
             return df
         except Exception as e:
@@ -30,23 +31,28 @@ class DataLayer:
 
     def macro_data(self):
         try:
+            # 1. 抓取仍然存在于 FRED 上的数据
             dgs10 = self.fred.get_series("DGS10")
             dgs2 = self.fred.get_series("DGS2")
             gdp = self.fred.get_series("GDP")
-            wilshire = self.fred.get_series("WILL5000PRFC")
             hy = self.fred.get_series("BAMLH0A0HYM2")
+            
+            # 2. 【核心修复】从 Yahoo Finance 抓取 Wilshire 5000 代替 FRED
+            wilshire = yf.Ticker("^W5000").history(period="10y")["Close"]
+            
+            # 去除时区信息，确保能和 FRED 的时间戳完美对齐
+            if wilshire.index.tz is not None:
+                wilshire.index = wilshire.index.tz_localize(None)
 
-            # 使用 pd.concat 按照日期对齐数据
+            # 3. 拼接所有宏观数据
             df = pd.concat([dgs10, dgs2, gdp, wilshire, hy], axis=1)
             df.columns = ["DGS10", "DGS2", "GDP", "WILL5000", "HY"]
 
-            # 【关键修复】：使用 ffill() 填充季度数据！
-            # 因为 GDP 是季度的，其他是日更的。如果不 ffill 直接 dropna，会删掉所有数据。
+            # 4. ffill() 向下填充（解决GDP是季度数据的问题），然后 dropna()
             df = df.ffill().dropna()
             
             return df
 
         except Exception as e:
             st.error(f"FRED 数据抓取失败: {e}")
-            # 返回带有正确列名的空 DataFrame，防止后续代码报错
             return pd.DataFrame(columns=["DGS10", "DGS2", "GDP", "WILL5000", "HY"])
