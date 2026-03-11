@@ -23,7 +23,9 @@ class FactorEngine:
     def erp(pe, ten_year_rate):
         if ten_year_rate == 0 or pd.isna(ten_year_rate):
             return np.nan
-        return (pe - 15) / ten_year_rate
+        # 正确公式：盈利收益率 (1 / PE) - 十年期美债收益率
+        earnings_yield = 1 / pe
+        return earnings_yield - ten_year_rate
 
 
     @staticmethod
