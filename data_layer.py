@@ -2,25 +2,33 @@ import os
 import yfinance as yf
 import pandas as pd
 from fredapi import Fred
+import streamlit as st
 
-FRED_KEY = os.environ.get("FRED_API_KEY")  # 一定要用这个方式读取
+FRED_KEY = os.environ.get("FRED_API_KEY")
 
 class DataLayer:
     def __init__(self, fred_key=None):
-        self.fred = Fred(api_key=FRED_KEY)
+        # 兼容传入的 key 或环境变量
+        key = fred_key or FRED_KEY
+        self.fred = Fred(api_key=key)
 
     def market_data(self):
-        # 下载10年历史数据
-        spx = yf.download("^GSPC", period="10y", auto_adjust=True, threads=False)["Close"]
-        vix = yf.download("^VIX", period="10y", auto_adjust=True, threads=False)["Close"]
+        try:
+            # 下载10年历史数据
+            spx = yf.download("^GSPC", period="10y", auto_adjust=True, threads=False)["Close"]
+            vix = yf.download("^VIX", period="10y", auto_adjust=True, threads=False)["Close"]
 
-        df = pd.concat([spx, vix], axis=1)
-        df.columns = ["SPX", "VIX"]
-        df = df.dropna()
-        return df
+            # 将 Series 组合成 DataFrame
+            df = pd.concat([spx, vix], axis=1)
+            df.columns = ["SPX", "VIX"]
+            
+            # 向下填充缺失值（比如有些日子VIX停盘但SPX开盘），然后去掉头部的NaN
+            df = df.ffill().dropna()
+            return df
+        except Exception as e:
+            raise Exception(f"Yahoo Finance 数据抓取异常: {e}")
 
     def macro_data(self):
-        # 注意缩进，try 在函数内部
         try:
             dgs10 = self.fred.get_series("DGS10")
             dgs2 = self.fred.get_series("DGS2")
@@ -28,25 +36,17 @@ class DataLayer:
             wilshire = self.fred.get_series("WILL5000PRFC")
             hy = self.fred.get_series("BAMLH0A0HYM2")
 
-            df = pd.DataFrame({
-                "DGS10": dgs10,
-                "DGS2": dgs2,
-                "GDP": gdp,
-                "WILL5000": wilshire,
-                "HY": hy
-            })
-            df = df.dropna()
+            # 使用 pd.concat 按照日期对齐数据
+            df = pd.concat([dgs10, dgs2, gdp, wilshire, hy], axis=1)
+            df.columns = ["DGS10", "DGS2", "GDP", "WILL5000", "HY"]
+
+            # 【关键修复】：使用 ffill() 填充季度数据！
+            # 因为 GDP 是季度的，其他是日更的。如果不 ffill 直接 dropna，会删掉所有数据。
+            df = df.ffill().dropna()
+            
             return df
 
         except Exception as e:
-            # 防止整个 app 崩溃
-            import streamlit as st
             st.error(f"FRED 数据抓取失败: {e}")
-            # 返回空 DataFrame
-            return pd.DataFrame({
-                "DGS10": [],
-                "DGS2": [],
-                "GDP": [],
-                "WILL5000": [],
-                "HY": []
-            })
+            # 返回带有正确列名的空 DataFrame，防止后续代码报错
+            return pd.DataFrame(columns=["DGS10", "DGS2", "GDP", "WILL5000", "HY"])
