@@ -35,21 +35,21 @@ data_layer = DataLayer(FRED_KEY)
 # -------------------------------
 # 数据加载
 # -------------------------------
-st.info("正在抓取市场数据...")
-try:
-    market = data_layer.market_data()
-except Exception as e:
-    st.error(f"市场数据加载失败: {e}")
-    market = pd.DataFrame({"SPX": [], "VIX": []})
+with st.spinner("正在抓取市场数据..."):
+    try:
+        market = data_layer.market_data()
+    except Exception as e:
+        st.error(f"市场数据加载失败: {e}")
+        market = pd.DataFrame({"SPX": [], "VIX": []})
 
-st.info("正在抓取宏观数据...")
-try:
-    macro = data_layer.macro_data()
-except Exception as e:
-    st.error(f"宏观数据加载失败: {e}")
-    macro = pd.DataFrame({
-        "DGS10": [], "DGS2": [], "GDP": [], "WILL5000": [], "HY": []
-    })
+with st.spinner("正在抓取宏观数据..."):
+    try:
+        macro = data_layer.macro_data()
+    except Exception as e:
+        st.error(f"宏观数据加载失败: {e}")
+        macro = pd.DataFrame({
+            "DGS10": [], "DGS2": [], "GDP": [], "WILL5000": [], "HY": []
+        })
 
 # -------------------------------
 # 核心市场数据
